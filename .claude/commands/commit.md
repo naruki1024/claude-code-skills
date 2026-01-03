@@ -17,7 +17,15 @@ allowed-tools: Bash(git add:*), Bash(git status:*), Bash(git commit:*), Bash(git
 ## コミットメッセージ規則
 - 1行目: 50文字以内の要約（型: 説明）
 - 型の例: feat, fix, docs, style, refactor, test, chore
+- **メッセージは日本語で記述**（型は英語、略語可）
 - 必要に応じて本文で詳細を説明
+
+### 例
+```
+feat: Issue チェーンワークフロー追加
+fix: API エンドポイントのバグ修正
+refactor: ドキュメント構成を整理
+```
 
 ## 手順
 1. 変更内容を確認
