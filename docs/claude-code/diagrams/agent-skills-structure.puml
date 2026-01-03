@@ -1,0 +1,75 @@
+@startuml agent-skills-structure
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+
+title Agent Skills / Sub-agent / Task 構造比較
+
+package "メインセッション" as main_session {
+  [Claude Code\nメインエージェント] as main
+
+  database "コンテキストウィンドウ\n(200k tokens)" as main_ctx {
+    [システムプロンプト\n(1.4%)] as sys_prompt
+    [システムツール\n(9.7%)] as sys_tools
+    [Auto Compactバッファ\n(22.5%)] as compact_buf
+    [ユーザー利用可能領域] as user_area
+  }
+}
+
+package ".claude/agents/ (Sub-agent)" as subagent_pkg #LightBlue {
+  file "architect.md" as arch_md
+  file "editor.md" as edit_md
+  note bottom of subagent_pkg
+    **セッション開始時に常駐**
+    - メタデータがコンテキストに追加
+    - プロジェクト全体で参照される
+    - 数を増やすとコンテキスト圧迫
+  end note
+}
+
+package ".claude/skills/ (Agent Skills)" as skills_pkg #LightGreen {
+  folder "tech-writer/" as tw_skill {
+    file "SKILL.md" as skill_md
+    folder "agents/" as agents_dir {
+      file "research.md" as research_md
+      file "writer.md" as writer_md
+      file "reviewer.md" as reviewer_md
+    }
+    folder "references/" as refs_dir {
+      file "style-guide.md" as style_md
+      file "templates.md" as tmpl_md
+    }
+    folder "scripts/" as scripts_dir {
+      file "format.py" as format_py
+    }
+  }
+  note bottom of skills_pkg
+    **コンテキストを占有しない**
+    - 段階的ロード
+    - Task実行直前に読み込み
+    - 結果のみ返却
+  end note
+}
+
+package "Task (独立プロセス)" as task_pkg #LightYellow {
+  [Task 1\nリサーチ] as task1
+  [Task 2\n執筆] as task2
+  [Task 3\nレビュー] as task3
+
+  database "独立コンテキスト\n(各200k tokens)" as task_ctx
+
+  note bottom of task_pkg
+    **独立したコンテキスト**
+    - 最大10個並列起動可能
+    - 終了時にコンテキスト破棄
+    - 結果のみメインに返却
+  end note
+}
+
+' 関係線
+subagent_pkg -[#blue]-> main_ctx : 常駐\n(セッション開始時)
+main --> skills_pkg : 必要時に\n段階的ロード
+skills_pkg --> task_pkg : Task起動時に\nagents/*.md読み込み
+task_pkg -[#green]-> main : 結果のみ返却\n(コンテキスト分離)
+
+@enduml

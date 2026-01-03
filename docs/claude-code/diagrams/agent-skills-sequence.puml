@@ -1,0 +1,101 @@
+@startuml agent-skills-sequence
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam sequenceMessageAlign center
+
+title Agent Skills / Sub-agent / Task の関係
+
+actor User as user
+participant "Claude Code\n(メインエージェント)" as main
+database "コンテキスト\nウィンドウ\n(200k tokens)" as ctx
+collections ".claude/agents/\n(Sub-agent定義)" as subagent_def
+collections ".claude/skills/\n(Skills定義)" as skills_def
+participant "Task\n(独立コンテキスト)" as task
+
+== セッション開始時 ==
+
+user -> main : セッション開始
+activate main
+
+main -> subagent_def : メタデータ読み込み
+subagent_def --> ctx : **常駐**\n(セッション全体で保持)
+note right of ctx
+  Sub-agentのメタデータは
+  セッション開始時に
+  コンテキストに常駐
+end note
+
+main -> skills_def : メタデータのみ読み込み\n(SKILL.md本文は読まない)
+note right of skills_def
+  Skillsはコンテキストを
+  **占有しない**
+  (段階的ロード)
+end note
+
+== ユーザーからのリクエスト ==
+
+user -> main : タスク依頼\n「技術記事を書いて」
+
+main -> main : どのSkillが適切か判断
+
+== Skills発動 (段階的ロード) ==
+
+group Discovery Phase
+  main -> skills_def : Skillメタデータ確認
+  skills_def --> main : 候補Skill特定
+end
+
+group Loading Phase
+  main -> skills_def : SKILL.md読み込み
+  skills_def --> main : ワークフロー定義取得
+end
+
+== Task実行 (コンテキスト分離) ==
+
+group Execution Phase - リサーチTask
+  main -> task : Task起動\n(agents/research.md読み込み)
+  activate task
+  note over task
+    **独立したコンテキスト**
+    - 200k tokens利用可能
+    - Web検索・ファイル読み込み
+    - 中間ログはここで消費
+  end note
+  task -> task : リサーチ実行\n(大量のトークン消費)
+  task --> main : **要約結果のみ返却**
+  deactivate task
+  note right of main
+    メインのコンテキストは
+    **スカスカのまま保持**
+  end note
+end
+
+group Execution Phase - 執筆Task
+  main -> task : Task起動\n(agents/writer.md読み込み)
+  activate task
+  task -> skills_def : references/読み込み\n(必要時のみ)
+  note over task
+    - リサーチ結果の要約を入力
+    - 何度書き直しても
+      このコンテキスト内で完結
+  end note
+  task -> task : 執筆実行
+  task --> main : **完成ドラフトのみ返却**
+  deactivate task
+end
+
+group Execution Phase - レビューTask
+  main -> task : Task起動\n(agents/reviewer.md読み込み)
+  activate task
+  task -> task : レビュー実行
+  task --> main : **レビュー結果のみ返却**
+  deactivate task
+end
+
+== 結果返却 ==
+
+main --> user : 完成した記事
+
+deactivate main
+
+@enduml

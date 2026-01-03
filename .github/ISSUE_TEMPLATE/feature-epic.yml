@@ -1,0 +1,107 @@
+name: Feature Epic (開発ワークフロー)
+description: 新機能の完全開発サイクルを開始します。Claude Codeが自動的にサブIssueチェーンを実行します。
+title: "[Epic] "
+labels: ["epic", "claude-workflow"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 機能開発ワークフロー
+
+        このテンプレートで作成されたIssueは、自動的にサブIssueチェーンに分解され、
+        Claude Codeによって順次実装されます。
+
+        **フロー:**
+        1. 要件分析 → 整合性チェック → E2E設計
+        2. API設計 → Backend実装 / Frontend実装（並列）
+        3. 統合 → E2Eテスト実行
+        4. PR作成
+
+  - type: input
+    id: feature_name
+    attributes:
+      label: 機能名（英語、ハイフン区切り）
+      description: "例: user-management, payment-flow, dashboard-analytics"
+      placeholder: "user-management"
+    validations:
+      required: true
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: 要件概要
+      description: |
+        実現したい機能を詳細に記述してください。
+        - ユーザーストーリー形式推奨
+        - 受け入れ条件を明記
+      placeholder: |
+        ## ユーザーストーリー
+        As a 管理者
+        I want to ユーザー一覧を表示・検索・エクスポート
+        So that ユーザー管理業務を効率化できる
+
+        ## 受け入れ条件
+        - [ ] ユーザー一覧がページネーション付きで表示される
+        - [ ] 名前・メールで検索できる
+        - [ ] CSV/Excelでエクスポートできる
+
+        ## 画面仕様
+        - ヘッダーに検索バー
+        - テーブル形式で一覧表示
+        - 各行にアクションボタン（編集・削除）
+    validations:
+      required: true
+
+  - type: input
+    id: figma_url
+    attributes:
+      label: Figma URL（任意）
+      description: デザインがある場合はFigmaリンクを記載
+      placeholder: "https://www.figma.com/file/..."
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度
+      options:
+        - P0 - Critical（即時対応）
+        - P1 - High（今スプリント）
+        - P2 - Medium（次スプリント）
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: phases
+    attributes:
+      label: 実行フェーズ
+      description: 実行するフェーズを選択（通常は全選択）
+      options:
+        - label: "Phase 1: 要件分析・E2E設計"
+          required: true
+        - label: "Phase 2: Backend実装（API設計 → TDD実装）"
+          required: true
+        - label: "Phase 2: Frontend実装（デザイン解析 → コンポーネント実装）"
+          required: true
+        - label: "Phase 3: 統合・E2Eテスト実行"
+          required: true
+        - label: "Phase 4: PR作成"
+          required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 制約・注意事項
+      description: 技術的制約、セキュリティ要件、既存コードとの整合性など
+      placeholder: |
+        - 既存のAPIパターンに従うこと
+        - ユーザーデータはマスキングして表示
+        - 認証必須エンドポイント
+
+  - type: textarea
+    id: references
+    attributes:
+      label: 参考資料
+      description: 参考になるドキュメント、既存実装、外部リソースなど
+      placeholder: |
+        - 既存のユーザー管理API: src/api/users/
+        - デザインガイドライン: docs/design-system.md

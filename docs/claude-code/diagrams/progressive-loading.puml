@@ -1,0 +1,83 @@
+@startuml progressive-loading
+!theme plain
+skinparam backgroundColor #FEFEFE
+
+title Skills の段階的ロード (Progressive Loading)
+
+|メインエージェント|
+start
+:ユーザーからリクエスト受信;
+
+|#LightBlue|Discovery Phase|
+:全Skillsのメタデータ確認;
+note right
+  **読み込まれるもの**
+  - name
+  - description
+
+  **読み込まれないもの**
+  - SKILL.md本文
+  - agents/*.md
+  - references/
+end note
+
+:リクエストに適合するSkill特定;
+
+|#LightGreen|Loading Phase|
+:該当SkillのSKILL.md読み込み;
+note right
+  **読み込まれるもの**
+  - ワークフロー定義
+  - ステップ一覧
+
+  **まだ読み込まれない**
+  - agents/*.md本文
+  - references/
+end note
+
+:ワークフロー解析;
+:実行すべきTask決定;
+
+|#LightYellow|Execution Phase|
+:Task起動決定;
+
+fork
+  :Task用の独立コンテキスト作成;
+  note right
+    **この時点で読み込み**
+    - agents/該当Task.md
+    - 必要なreferences/のみ
+  end note
+fork again
+  :メインコンテキストは待機;
+  note right
+    メインは軽量のまま
+    司令塔として機能
+  end note
+end fork
+
+:Task実行\n(独立コンテキスト内で処理);
+:Task完了;
+
+|メインエージェント|
+:結果のみ受け取り;
+note right
+  **返却されるもの**
+  - 要約・成果物のみ
+
+  **破棄されるもの**
+  - 中間ログ
+  - 思考過程
+  - 参照した全データ
+end note
+
+while (次のTaskあり?) is (yes)
+  :次のTask起動\n(Execution Phase);
+  :Task実行\n(独立コンテキスト);
+  :結果のみ受け取り;
+endwhile (no)
+
+:最終結果をユーザーに返却;
+stop
+
+@enduml

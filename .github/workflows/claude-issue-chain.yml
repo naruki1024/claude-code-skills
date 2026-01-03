@@ -1,0 +1,659 @@
+name: Claude Issue Chain Orchestrator
+
+on:
+  issues:
+    types: [opened, closed, labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  # Agent paths mapping
+  AGENTS_BASE_PATH: .claude/skills/develop-feature/agents
+
+jobs:
+  # ============================================
+  # Epic Issue作成時: ワークスペース初期化 + 最初のサブIssue作成
+  # ============================================
+  initialize-workflow:
+    if: |
+      github.event.action == 'opened' &&
+      contains(github.event.issue.labels.*.name, 'epic') &&
+      contains(github.event.issue.labels.*.name, 'claude-workflow')
+    runs-on: ubuntu-latest
+    outputs:
+      feature_name: ${{ steps.parse.outputs.feature_name }}
+      parent_issue: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse Epic Issue
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body;
+
+            // Extract feature name from issue body (機能名フィールド)
+            const featureMatch = body.match(/### 機能名.*\n\n([a-z0-9-]+)/i) ||
+                                 body.match(/feature[_-]?name.*:\s*([a-z0-9-]+)/i);
+            const featureName = featureMatch ? featureMatch[1].trim() : `feature-${context.issue.number}`;
+
+            // Extract Figma URL if present
+            const figmaMatch = body.match(/### Figma URL.*\n\n(https:\/\/www\.figma\.com\/[^\s\n]+)/i);
+            const figmaUrl = figmaMatch ? figmaMatch[1] : '';
+
+            core.setOutput('feature_name', featureName);
+            core.setOutput('figma_url', figmaUrl);
+
+            console.log(`Feature Name: ${featureName}`);
+            console.log(`Figma URL: ${figmaUrl}`);
+
+            return { featureName, figmaUrl };
+
+      - name: Initialize Workspace
+        run: |
+          FEATURE_NAME="${{ steps.parse.outputs.feature_name }}"
+          WORKSPACE=".claude/workspaces/${FEATURE_NAME}"
+
+          mkdir -p "${WORKSPACE}"/{api-specs,design,e2e,logs}
+
+          cat > "${WORKSPACE}/context.md" << 'EOF'
+          # Workflow Context
+
+          - Parent Issue: #${{ github.event.issue.number }}
+          - Feature: ${{ steps.parse.outputs.feature_name }}
+          - Created: ${{ github.event.issue.created_at }}
+          - Status: Initializing
+
+          ## Progress
+          - [ ] Phase 1: Analysis & Design
+            - [ ] 1-1: Requirements Analysis
+            - [ ] 1-2: Consistency Check
+            - [ ] 1-3: E2E Test Design
+          - [ ] Phase 2: Implementation
+            - [ ] 2-1: API Design
+            - [ ] 2-2: Backend TDD Implementation
+            - [ ] 2-3: Frontend Design Analysis
+            - [ ] 2-4: Frontend Implementation
+          - [ ] Phase 3: Integration & Testing
+            - [ ] 3-1: Integration
+            - [ ] 3-2: E2E Execution
+          - [ ] Phase 4: Completion
+            - [ ] 4-1: PR Creation
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "workflow/${FEATURE_NAME}"
+          git add "${WORKSPACE}"
+          git commit -m "chore: initialize workspace for ${FEATURE_NAME}"
+          git push -u origin "workflow/${FEATURE_NAME}"
+
+      - name: Create Phases Config
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const featureName = '${{ steps.parse.outputs.feature_name }}';
+
+            const phases = [
+              {
+                phase: 1, step: 1,
+                name: 'requirements',
+                title: '要件分析',
+                agent: 'requirements-analyst',
+                agentPath: 'analysis/requirements-analyst.md',
+                inputs: ['Parent Issue #${{ github.event.issue.number }}'],
+                outputs: ['requirements.md'],
+                next: 'phase-1-2-consistency',
+                dependencies: [],
+                maxTurns: 10
+              },
+              {
+                phase: 1, step: 2,
+                name: 'consistency',
+                title: '整合性チェック',
+                agent: 'consistency-checker',
+                agentPath: 'analysis/consistency-checker.md',
+                inputs: ['requirements.md'],
+                outputs: ['requirements.md (validated)'],
+                next: 'phase-1-3-e2e-design',
+                dependencies: ['phase-1-1-requirements'],
+                maxTurns: 8
+              },
+              {
+                phase: 1, step: 3,
+                name: 'e2e-design',
+                title: 'E2Eテスト設計',
+                agent: 'e2e-designer',
+                agentPath: 'quality/e2e-designer.md',
+                inputs: ['requirements.md'],
+                outputs: ['e2e/test-scenarios.md', 'e2e/test-skeleton.spec.ts'],
+                next: 'phase-2-1-api-design',
+                dependencies: ['phase-1-2-consistency'],
+                maxTurns: 12
+              },
+              {
+                phase: 2, step: 1,
+                name: 'api-design',
+                title: 'API設計',
+                agent: 'api-designer',
+                agentPath: 'backend/api-designer.md',
+                inputs: ['requirements.md'],
+                outputs: ['api-specs/*.md'],
+                next: 'phase-2-2-backend-impl',
+                dependencies: ['phase-1-3-e2e-design'],
+                maxTurns: 10
+              },
+              {
+                phase: 2, step: 2,
+                name: 'backend-impl',
+                title: 'Backend TDD実装',
+                agent: 'tdd-implementer',
+                agentPath: 'backend/tdd-implementer.md',
+                inputs: ['api-specs/*.md'],
+                outputs: ['src/api/**', 'tests/**'],
+                next: 'phase-3-1-integration',
+                dependencies: ['phase-2-1-api-design'],
+                maxTurns: 20
+              },
+              {
+                phase: 2, step: 3,
+                name: 'frontend-design',
+                title: 'Frontendデザイン解析',
+                agent: 'design-analyzer',
+                agentPath: 'frontend/design-analyzer.md',
+                inputs: ['requirements.md', 'Figma URL'],
+                outputs: ['design/component-specs.md'],
+                next: 'phase-2-4-frontend-impl',
+                dependencies: ['phase-1-3-e2e-design'],
+                maxTurns: 10
+              },
+              {
+                phase: 2, step: 4,
+                name: 'frontend-impl',
+                title: 'Frontend実装',
+                agent: 'component-builder',
+                agentPath: 'frontend/component-builder.md',
+                inputs: ['design/component-specs.md'],
+                outputs: ['src/components/**'],
+                next: 'phase-3-1-integration',
+                dependencies: ['phase-2-3-frontend-design'],
+                maxTurns: 18
+              },
+              {
+                phase: 3, step: 1,
+                name: 'integration',
+                title: 'Frontend/Backend統合',
+                agent: 'integrator',
+                agentPath: 'integration/integrator.md',
+                inputs: ['src/api/**', 'src/components/**'],
+                outputs: ['lib/api/**', 'hooks/**'],
+                next: 'phase-3-2-e2e-execution',
+                dependencies: ['phase-2-2-backend-impl', 'phase-2-4-frontend-impl'],
+                maxTurns: 15
+              },
+              {
+                phase: 3, step: 2,
+                name: 'e2e-execution',
+                title: 'E2Eテスト実行',
+                agent: 'e2e-executor',
+                agentPath: 'quality/e2e-executor.md',
+                inputs: ['e2e/test-skeleton.spec.ts'],
+                outputs: ['logs/e2e-execution.md'],
+                next: 'phase-4-1-pr-creation',
+                dependencies: ['phase-3-1-integration'],
+                maxTurns: 25
+              },
+              {
+                phase: 4, step: 1,
+                name: 'pr-creation',
+                title: 'PR作成',
+                agent: 'pr-creator',
+                agentPath: 'integration/pr-creator.md',
+                inputs: ['All implementation files'],
+                outputs: ['Pull Request'],
+                next: null,
+                dependencies: ['phase-3-2-e2e-execution'],
+                maxTurns: 8
+              }
+            ];
+
+            const workspace = `.claude/workspaces/${featureName}`;
+            fs.writeFileSync(
+              `${workspace}/phases-config.json`,
+              JSON.stringify(phases, null, 2)
+            );
+
+      - name: Commit Phases Config
+        run: |
+          git add .claude/workspaces/${{ steps.parse.outputs.feature_name }}/phases-config.json
+          git commit -m "chore: add phases config for ${{ steps.parse.outputs.feature_name }}"
+          git push
+
+      - name: Create First Sub-Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const featureName = '${{ steps.parse.outputs.feature_name }}';
+            const parentIssue = context.issue.number;
+
+            const firstPhase = {
+              phase: 1, step: 1,
+              name: 'requirements',
+              title: '要件分析',
+              agent: 'requirements-analyst',
+              agentPath: 'analysis/requirements-analyst.md',
+              next: 'phase-1-2-consistency',
+              maxTurns: 10
+            };
+
+            const metadata = {
+              parent_issue: parentIssue,
+              feature_name: featureName,
+              phase: firstPhase.phase,
+              step: firstPhase.step,
+              agent: firstPhase.agent,
+              agent_path: firstPhase.agentPath,
+              next_phase: firstPhase.next,
+              dependencies: [],
+              max_turns: firstPhase.maxTurns
+            };
+
+            const issueBody = `## Phase ${firstPhase.phase}.${firstPhase.step}: ${firstPhase.title}
+
+**Parent Issue**: #${parentIssue}
+**Feature**: ${featureName}
+**Workspace**: \`.claude/workspaces/${featureName}/\`
+**Branch**: \`workflow/${featureName}\`
+
+### 入力
+- Parent Issue #${parentIssue} の要件概要
+
+### タスク
+Parent Issue の内容を解析し、構造化された要件ドキュメントを作成してください。
+
+### 出力
+- \`.claude/workspaces/${featureName}/requirements.md\`
+
+### 完了条件
+- [ ] 要件ドキュメントが作成されている
+- [ ] ユーザーストーリーが明確化されている
+- [ ] 受け入れ条件が具体的に記載されている
+
+---
+<!-- CLAUDE-WORKFLOW-METADATA
+${JSON.stringify(metadata, null, 2)}
+-->`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[#${parentIssue}] phase-${firstPhase.phase}-${firstPhase.step}-${firstPhase.name}: ${firstPhase.title}`,
+              body: issueBody,
+              labels: ['claude-sub-issue', 'phase-1', 'auto-execute']
+            });
+
+            // Comment on parent issue
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parentIssue,
+              body: `## Workflow Initialized
+
+Workspace created at: \`.claude/workspaces/${featureName}/\`
+Branch: \`workflow/${featureName}\`
+
+**First phase starting**: Phase 1.1 - 要件分析
+
+The workflow will automatically chain through all phases.`
+            });
+
+  # ============================================
+  # サブIssue実行: Claude Code Action
+  # ============================================
+  execute-phase:
+    if: |
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'auto-execute' &&
+      contains(github.event.issue.labels.*.name, 'claude-sub-issue')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Metadata
+        id: metadata
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body;
+            const metadataMatch = body.match(/<!-- CLAUDE-WORKFLOW-METADATA\n([\s\S]*?)\n-->/);
+            if (!metadataMatch) {
+              core.setFailed('No metadata found in issue');
+              return;
+            }
+            const metadata = JSON.parse(metadataMatch[1]);
+
+            core.setOutput('feature_name', metadata.feature_name);
+            core.setOutput('agent', metadata.agent);
+            core.setOutput('agent_path', metadata.agent_path);
+            core.setOutput('next_phase', metadata.next_phase || '');
+            core.setOutput('parent_issue', metadata.parent_issue);
+            core.setOutput('phase', metadata.phase);
+            core.setOutput('step', metadata.step);
+            core.setOutput('max_turns', metadata.max_turns || 15);
+
+            console.log('Metadata:', metadata);
+            return metadata;
+
+      - name: Checkout Workflow Branch
+        run: |
+          git fetch origin
+          git checkout "workflow/${{ steps.metadata.outputs.feature_name }}" || \
+            git checkout -b "workflow/${{ steps.metadata.outputs.feature_name }}"
+
+      - name: Load Agent Prompt
+        id: agent
+        run: |
+          AGENT_PATH="${{ env.AGENTS_BASE_PATH }}/${{ steps.metadata.outputs.agent_path }}"
+
+          if [ -f "$AGENT_PATH" ]; then
+            echo "Loading agent prompt from: $AGENT_PATH"
+            PROMPT=$(cat "$AGENT_PATH")
+          else
+            echo "Agent file not found: $AGENT_PATH, using default prompt"
+            PROMPT="Execute the task described in this issue."
+          fi
+
+          # Save to file for multi-line handling
+          echo "$PROMPT" > /tmp/agent_prompt.txt
+          echo "prompt_file=/tmp/agent_prompt.txt" >> $GITHUB_OUTPUT
+
+      - name: Execute Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            あなたは ${{ steps.metadata.outputs.agent }} エージェントです。
+
+            ## コンテキスト
+            - Parent Issue: #${{ steps.metadata.outputs.parent_issue }}
+            - Feature: ${{ steps.metadata.outputs.feature_name }}
+            - Workspace: .claude/workspaces/${{ steps.metadata.outputs.feature_name }}/
+            - Current Phase: ${{ steps.metadata.outputs.phase }}.${{ steps.metadata.outputs.step }}
+            - Branch: workflow/${{ steps.metadata.outputs.feature_name }}
+
+            ## エージェント指示
+            以下のファイルを読み込んで、エージェントの詳細な指示を確認してください:
+            ${{ env.AGENTS_BASE_PATH }}/${{ steps.metadata.outputs.agent_path }}
+
+            ## タスク
+            ${{ github.event.issue.body }}
+
+            ## 重要な指示
+            1. 全ての成果物は .claude/workspaces/${{ steps.metadata.outputs.feature_name }}/ に保存
+            2. 前のフェーズの成果物がある場合は読み込んで参照
+            3. 作業完了後、変更をコミット
+            4. 完了条件を全て満たすこと
+            5. 最後にサマリを出力
+
+          claude_args: |
+            --max-turns ${{ steps.metadata.outputs.max_turns }}
+            --allowedTools "Read,Write,Edit,Bash(git:*),Bash(npm:*),Bash(npx:*),Grep,Glob"
+
+      - name: Commit Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "feat(${{ steps.metadata.outputs.feature_name }}): complete phase-${{ steps.metadata.outputs.phase }}-${{ steps.metadata.outputs.step }}"
+            git push origin "workflow/${{ steps.metadata.outputs.feature_name }}"
+          fi
+
+      - name: Log Execution
+        run: |
+          WORKSPACE=".claude/workspaces/${{ steps.metadata.outputs.feature_name }}"
+          LOG_FILE="${WORKSPACE}/logs/phase-${{ steps.metadata.outputs.phase }}-${{ steps.metadata.outputs.step }}.md"
+
+          cat > "$LOG_FILE" << EOF
+          # Phase ${{ steps.metadata.outputs.phase }}.${{ steps.metadata.outputs.step }} Execution Log
+
+          - **Agent**: ${{ steps.metadata.outputs.agent }}
+          - **Executed**: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          - **Workflow Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          - **Status**: Completed
+          EOF
+
+          git add "$LOG_FILE"
+          git commit -m "chore: add execution log for phase-${{ steps.metadata.outputs.phase }}-${{ steps.metadata.outputs.step }}" || true
+          git push origin "workflow/${{ steps.metadata.outputs.feature_name }}" || true
+
+      - name: Close Current Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed'
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## Phase Completed
+
+**Workflow Run**: [View Logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+Next phase will start automatically.`
+            });
+
+  # ============================================
+  # Issue Close時: 次のフェーズを開始
+  # ============================================
+  chain-next-phase:
+    if: |
+      github.event.action == 'closed' &&
+      contains(github.event.issue.labels.*.name, 'claude-sub-issue')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Metadata
+        id: metadata
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body;
+            const metadataMatch = body.match(/<!-- CLAUDE-WORKFLOW-METADATA\n([\s\S]*?)\n-->/);
+            if (!metadataMatch) {
+              console.log('No metadata found, skipping chain');
+              core.setOutput('should_continue', 'false');
+              return { shouldContinue: false };
+            }
+            const metadata = JSON.parse(metadataMatch[1]);
+
+            core.setOutput('next_phase', metadata.next_phase || '');
+            core.setOutput('feature_name', metadata.feature_name);
+            core.setOutput('parent_issue', metadata.parent_issue);
+            core.setOutput('should_continue', metadata.next_phase ? 'true' : 'false');
+
+            return metadata;
+
+      - name: Checkout Workflow Branch
+        if: steps.metadata.outputs.should_continue == 'true'
+        run: |
+          git fetch origin
+          git checkout "workflow/${{ steps.metadata.outputs.feature_name }}"
+
+      - name: Load Phases Config
+        if: steps.metadata.outputs.should_continue == 'true'
+        id: phases
+        run: |
+          WORKSPACE=".claude/workspaces/${{ steps.metadata.outputs.feature_name }}"
+          if [ -f "${WORKSPACE}/phases-config.json" ]; then
+            cat "${WORKSPACE}/phases-config.json"
+            echo "config_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Phases config not found"
+            echo "config_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Dependencies and Create Next Issue
+        if: |
+          steps.metadata.outputs.should_continue == 'true' &&
+          steps.phases.outputs.config_exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const featureName = '${{ steps.metadata.outputs.feature_name }}';
+            const parentIssue = parseInt('${{ steps.metadata.outputs.parent_issue }}');
+            const nextPhaseKey = '${{ steps.metadata.outputs.next_phase }}';
+
+            // Load phases config
+            const configPath = `.claude/workspaces/${featureName}/phases-config.json`;
+            const phases = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+            // Find next phase
+            const nextPhase = phases.find(p => `phase-${p.phase}-${p.step}-${p.name}` === nextPhaseKey);
+            if (!nextPhase) {
+              console.log('Next phase not found:', nextPhaseKey);
+              return;
+            }
+
+            // Check if all dependencies are closed
+            if (nextPhase.dependencies && nextPhase.dependencies.length > 0) {
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: 'claude-sub-issue',
+                state: 'all',
+                per_page: 100
+              });
+
+              for (const dep of nextPhase.dependencies) {
+                const depIssue = issues.find(i => i.title.includes(dep) && i.title.includes(`#${parentIssue}`));
+                if (!depIssue || depIssue.state !== 'closed') {
+                  console.log(`Dependency ${dep} not yet closed, waiting...`);
+                  return;
+                }
+              }
+            }
+
+            // Create next issue
+            const metadata = {
+              parent_issue: parentIssue,
+              feature_name: featureName,
+              phase: nextPhase.phase,
+              step: nextPhase.step,
+              agent: nextPhase.agent,
+              agent_path: nextPhase.agentPath,
+              next_phase: nextPhase.next,
+              dependencies: nextPhase.dependencies || [],
+              max_turns: nextPhase.maxTurns || 15
+            };
+
+            const issueBody = `## Phase ${nextPhase.phase}.${nextPhase.step}: ${nextPhase.title}
+
+**Parent Issue**: #${parentIssue}
+**Feature**: ${featureName}
+**Workspace**: \`.claude/workspaces/${featureName}/\`
+**Branch**: \`workflow/${featureName}\`
+
+### 入力
+${nextPhase.inputs.map(i => `- ${i}`).join('\n')}
+
+### タスク
+前のフェーズの成果物を入力として、このフェーズのタスクを実行してください。
+
+### 出力
+${nextPhase.outputs.map(o => `- \`.claude/workspaces/${featureName}/${o}\``).join('\n')}
+
+### 完了条件
+- [ ] 全ての出力ファイルが生成されている
+- [ ] テスト/検証が完了している
+
+---
+<!-- CLAUDE-WORKFLOW-METADATA
+${JSON.stringify(metadata, null, 2)}
+-->`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[#${parentIssue}] ${nextPhaseKey}: ${nextPhase.title}`,
+              body: issueBody,
+              labels: ['claude-sub-issue', `phase-${nextPhase.phase}`, 'auto-execute']
+            });
+
+            console.log(`Created next issue: ${nextPhaseKey}`);
+
+      - name: Update Parent Issue Progress
+        if: steps.metadata.outputs.should_continue == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const parentIssue = parseInt('${{ steps.metadata.outputs.parent_issue }}');
+            const closedPhase = context.payload.issue.title;
+            const nextPhase = '${{ steps.metadata.outputs.next_phase }}';
+
+            let message = `**Phase completed**: ${closedPhase}`;
+            if (nextPhase) {
+              message += `\n\n**Next phase starting**: ${nextPhase}`;
+            } else {
+              message += `\n\n**All phases completed!** Please review the generated PR.`;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parentIssue,
+              body: message
+            });
+
+      - name: Handle Workflow Completion
+        if: |
+          steps.metadata.outputs.should_continue == 'false' ||
+          steps.metadata.outputs.next_phase == ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const parentIssue = parseInt('${{ steps.metadata.outputs.parent_issue }}');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parentIssue,
+              body: `## Workflow Completed
+
+All phases have been executed successfully.
+
+**Next Steps**:
+1. Review the generated PR
+2. Run final tests if needed
+3. Merge when ready
+
+Thank you for using the Claude Issue Chain Workflow!`
+            });
+
+            // Close parent issue
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parentIssue,
+              state: 'closed'
+            });

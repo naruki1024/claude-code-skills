@@ -1,0 +1,58 @@
+@startuml comparison-table
+!theme plain
+skinparam backgroundColor #FEFEFE
+
+title Sub-agent / Skills / Task 比較表
+
+map "Sub-agent (.claude/agents/)" as subagent {
+  配置場所 => .claude/agents/*.md
+  読み込みタイミング => セッション開始時
+  コンテキスト => **常駐** (圧迫する)
+  呼び出し方 => Claudeが判断 / Task経由
+  独立コンテキスト => Yes (Task実行時)
+  用途 => プロジェクト全体の常駐メンバー
+  例 => アーキテクト、編集長
+}
+
+map "Agent Skills (.claude/skills/)" as skills {
+  配置場所 => .claude/skills/*/SKILL.md
+  読み込みタイミング => 段階的ロード
+  コンテキスト => **占有しない**
+  呼び出し方 => Claudeが自動判断
+  独立コンテキスト => Yes (Task経由)
+  用途 => 特定ワークフローのパッケージ
+  例 => 技術記事ライター、コードレビュー
+}
+
+map "Task (Taskツール)" as task {
+  配置場所 => (動的に生成)
+  読み込みタイミング => 実行直前
+  コンテキスト => **独立 (200k tokens)**
+  呼び出し方 => メインから委譲
+  独立コンテキスト => Yes (本体)
+  用途 => 一時的なワーカー
+  例 => リサーチ、執筆、レビュー
+}
+
+subagent -[hidden]-> skills
+skills -[hidden]-> task
+
+note bottom of subagent
+  **特徴**: 長期間存在
+  セッション全体で参照される
+  数を増やすとコンテキスト圧迫
+end note
+
+note bottom of skills
+  **特徴**: コンテキスト効率最高
+  必要な時だけロード
+  再利用可能なコンポーネント
+end note
+
+note bottom of task
+  **特徴**: 使い捨て
+  終了時にコンテキスト破棄
+  結果のみ返却
+end note
+
+@enduml
