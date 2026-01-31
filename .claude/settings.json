@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(*/drizzle/*.sql)",
+      "Edit(*/drizzle/meta/**)",
+      "Write(*/drizzle/*.sql)",
+      "Write(*/drizzle/meta/**)",
+      "Edit(**/package-lock.json)",
+      "Edit(**/.next/**)",
+      "Edit(**/node_modules/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/scripts/migration-protect.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
