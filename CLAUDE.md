@@ -83,6 +83,24 @@ Plan-Do-Check-Act を体系的に適用する：
 - 型: feat, fix, docs, style, refactor, test, chore
 - 例: `feat: Issue チェーンワークフロー追加`
 
+## コマンド実行規則
+
+シェルの作業ディレクトリがリセットされる場合があるため、**常に絶対パスを使用する**：
+
+```bash
+# 良い例
+git -C /home/satoshi/workspace/claude-code-skills status
+ls /home/satoshi/workspace/claude-code-skills/src
+
+# 悪い例
+git status
+ls src
+```
+
+- `git` コマンドは `-C <絶対パス>` オプションを使用する
+- ファイル操作は絶対パスで指定する
+- `cd` に依存しない
+
 ## アーキテクチャ
 
 ```
